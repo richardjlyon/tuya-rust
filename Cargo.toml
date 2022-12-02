@@ -1,5 +1,5 @@
 [package]
-name = "tuya-rust"
+name = "tuyascan"
 version = "0.1.0"
 edition = "2021"
 
@@ -18,3 +18,5 @@ ring = "0.16.20"
 hmac = "0.12.1"
 base64 = "0.13.1"
 sha2 = "0.10.6"
+thiserror = "1.0.37"
+serde_path_to_error = "0.1.8"
