@@ -1,14 +1,14 @@
-use super::schemas::{Tokens, TokensResponse};
-use hmac::{Hmac, Mac};
 use reqwest::{
     header::{self, HeaderValue},
     StatusCode,
 };
 use serde::de::DeserializeOwned;
-use sha2::Sha256;
 use sha256::digest;
-use std::{process, time::SystemTime};
-use tuyascan::{error::AppError, get_key};
+use tuyascan::get_sys_time;
+use tuyascan::{error::AppError, get_secrets, ApiSecrets};
+
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
 
 const APIBASE: &str = "openapi.tuyaeu.com";
 const VER: &str = "v1.0";
@@ -16,20 +16,43 @@ const VER: &str = "v1.0";
 // A client for implementing the TuYa API
 pub struct Client {
     client: reqwest::Client,
+    secrets: ApiSecrets,
 }
 
 impl Client {
     // make an authenticated client
-    pub fn new() -> Self {
-        let client = build_client();
-        Self { client }
+    pub fn new() -> Client {
+        let secrets = get_secrets();
+
+        let mut headers = header::HeaderMap::new();
+        headers.insert(
+            "secret",
+            HeaderValue::from_str(&secrets.api_secret).unwrap(),
+        );
+        headers.insert(
+            "client_id",
+            HeaderValue::from_str(&secrets.api_key).unwrap(),
+        );
+        headers.insert("sign_method", HeaderValue::from_str("HMAC-SHA256").unwrap());
+
+        let client = reqwest::Client::builder()
+            .default_headers(headers)
+            .build()
+            .unwrap();
+
+        Self { client, secrets }
     }
 
-    async fn get<T: DeserializeOwned>(&self, endpoint: &str) -> Result<T, AppError> {
+    pub async fn get<T: DeserializeOwned>(&self, endpoint: &str) -> Result<T, AppError> {
         let url = format!("https://{}/{}/{}", APIBASE, VER, endpoint);
+        let payload = payload(&self.secrets.api_key, endpoint);
+        let signature = hmac_signature(&self.secrets.api_secret, &payload);
+
         let response = self
             .client
             .get(url)
+            .header("sign", signature)
+            .header("t", get_sys_time())
             .send()
             .await
             .map_err(|_| AppError::NetworkError)?;
@@ -50,46 +73,16 @@ impl Client {
         serde_path_to_error::deserialize(jd)
             .map_err(|e| AppError::ParseError(e.path().to_owned(), e.into_inner()))
     }
+}
 
-    pub async fn get_tokens(&mut self) -> Result<Tokens, AppError> {
-        self.get("token?grant_type=1")
-            .await
-            .map(|r: TokensResponse| r.result)
+impl Default for Client {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
-fn build_client() -> reqwest::Client {
-    let api_key = get_key("api_key").unwrap_or_else(|err| {
-        println!("Problem getting secrets: {err}");
-        process::exit(1);
-    });
-    
-    let api_secret = get_key("api_secret").unwrap_or_else(|err| {
-        println!("Problem getting secrets: {err}");
-        process::exit(1);
-    });
-    
-    let payload = dbg!(payload(&api_key));
-
-    let signature = hmac_signature(&api_secret, &payload);
-
-    let mut headers = header::HeaderMap::new();
-    headers.insert("secret", HeaderValue::from_str(&api_secret).unwrap());
-    headers.insert("client_id", HeaderValue::from_str(&api_key).unwrap());
-    headers.insert("sign", HeaderValue::from_str(&signature).unwrap());
-    headers.insert("t", HeaderValue::from_str(&get_sys_time()).unwrap());
-    headers.insert("sign_method", HeaderValue::from_str("HMAC-SHA256").unwrap());
-
-    reqwest::Client::builder()
-        .default_headers(headers)
-        .build()
-        .unwrap()
-}
-
 // construct the payload per the API
-fn payload(api_key: &str) -> String {
-    //FIXME refactor whole code to accept endpoint
-    let endpoint = "token?grant_type=1";
+fn payload(api_key: &str, endpoint: &str) -> String {
     let hash_body = digest("");
     format!(
         "{}{}GET\n{}\n\n/{}/{}",
@@ -114,16 +107,6 @@ fn hmac_signature(key: &str, msg: &str) -> String {
     let hex_bytes = hex::encode(&code_bytes);
 
     hex_bytes.to_uppercase()
-}
-
-fn get_sys_time() -> String {
-    match SystemTime::now().duration_since(SystemTime::UNIX_EPOCH) {
-        Ok(n) => {
-            let millis = n.as_millis();
-            millis.to_string()
-        }
-        Err(_) => panic!("SystemTime before UNIX EPOCH!"),
-    }
 }
 
 #[cfg(test)]
