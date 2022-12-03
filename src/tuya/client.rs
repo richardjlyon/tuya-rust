@@ -1,5 +1,4 @@
 use super::schemas::{Tokens, TokensResponse};
-use config::Config;
 use hmac::{Hmac, Mac};
 use reqwest::{
     header::{self, HeaderValue},
@@ -8,9 +7,8 @@ use reqwest::{
 use serde::de::DeserializeOwned;
 use sha2::Sha256;
 use sha256::digest;
-use std::collections::HashMap;
-use std::time::SystemTime;
-use tuyascan::error::AppError;
+use std::{process, time::SystemTime};
+use tuyascan::{error::AppError, get_key};
 
 const APIBASE: &str = "openapi.tuyaeu.com";
 const VER: &str = "v1.0";
@@ -24,9 +22,7 @@ impl Client {
     // make an authenticated client
     pub fn new() -> Self {
         let client = build_client();
-        Self {
-            client,
-        }
+        Self { client }
     }
 
     async fn get<T: DeserializeOwned>(&self, endpoint: &str) -> Result<T, AppError> {
@@ -63,9 +59,16 @@ impl Client {
 }
 
 fn build_client() -> reqwest::Client {
-    let api_key = get_key("api_key");
-    let api_secret = get_key("api_secret");
-
+    let api_key = get_key("api_key").unwrap_or_else(|err| {
+        println!("Problem getting secrets: {err}");
+        process::exit(1);
+    });
+    
+    let api_secret = get_key("api_secret").unwrap_or_else(|err| {
+        println!("Problem getting secrets: {err}");
+        process::exit(1);
+    });
+    
     let payload = dbg!(payload(&api_key));
 
     let signature = hmac_signature(&api_secret, &payload);
@@ -120,24 +123,6 @@ fn get_sys_time() -> String {
             millis.to_string()
         }
         Err(_) => panic!("SystemTime before UNIX EPOCH!"),
-    }
-}
-
-// get a key from secrets.toml
-fn get_key(key_name: &str) -> String {
-    let config = Config::builder()
-        .add_source(config::File::with_name("secrets"))
-        .build()
-        .unwrap();
-
-    let mut keys = config.try_deserialize::<HashMap<String, String>>().unwrap();
-
-    match keys.remove(key_name) {
-        Some(key) => key,
-        None => {
-            tracing::warn!("No API key found for key'{}'", key_name);
-            std::process::exit(0);
-        }
     }
 }
 
