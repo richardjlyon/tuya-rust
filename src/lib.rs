@@ -4,6 +4,7 @@ use std::{collections::HashMap, process, time::SystemTime};
 // pub mod tuya;
 pub mod error;
 
+#[derive(Debug)]
 pub struct ApiSecrets {
     pub api_key: String,
     pub api_secret: String,

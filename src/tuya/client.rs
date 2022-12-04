@@ -1,3 +1,4 @@
+use crate::tuya::schemas::Tokens;
 use reqwest::{
     header::{self, HeaderValue},
     StatusCode,
@@ -14,14 +15,16 @@ const APIBASE: &str = "openapi.tuyaeu.com";
 const VER: &str = "v1.0";
 
 // A client for implementing the TuYa API
+#[derive(Debug)]
 pub struct Client {
     client: reqwest::Client,
     secrets: ApiSecrets,
+    pub tokens: Option<Tokens>,
 }
 
 impl Client {
     // make an authenticated client
-    pub fn new() -> Client {
+    pub async fn build() -> Client {
         let secrets = get_secrets();
 
         let mut headers = header::HeaderMap::new();
@@ -40,7 +43,16 @@ impl Client {
             .build()
             .unwrap();
 
-        Self { client, secrets }
+        let mut tuya_client = Self {
+            client,
+            secrets,
+            tokens: None,
+        };
+
+        tuya_client.auth().await;
+        println!("clietnt: {:#?}", tuya_client);
+
+        tuya_client
     }
 
     pub async fn get<T: DeserializeOwned>(&self, endpoint: &str) -> Result<T, AppError> {
@@ -75,11 +87,11 @@ impl Client {
     }
 }
 
-impl Default for Client {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+// impl Default for Client {
+//     async fn default() -> Self {
+//         Self::build().await
+//     }
+// }
 
 // construct the payload per the API
 fn payload(api_key: &str, endpoint: &str) -> String {
